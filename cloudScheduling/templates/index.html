@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Cloud Scheduler</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background:#f3f4f6; }
+
+    .box {
+      background:#fff; border:1px solid #d1d5db; border-radius:6px;
+      padding:8px; margin:8px; min-width:130px; text-align:center;
+      position:relative; user-select:none;
+    }
+
+    .delete-btn {
+      position:absolute; top:4px; right:4px;
+      background:#ef4444; color:white; border:none;
+      border-radius:50%; width:20px; height:20px;
+      line-height:18px; font-size:12px; cursor:pointer;
+    }
+
+    .status {
+      font-size:12px; margin-top:4px;
+      font-weight:500;
+    }
+
+    .status.available { color:#10b981; }   /* green */
+    .status.busy { color:#ef4444; }        /* red */
+    .status.pending { color:#f59e0b; }     /* yellow */
+    .status.running { color:#3b82f6; }     /* blue */
+    .status.completed { color:#6b7280; }   /* gray */
+
+    .col { min-height:380px; padding:12px; border-radius:6px; background:#ffffff; box-shadow:0 1px 3px rgba(0,0,0,0.06); display:flex; flex-direction:column; }
+
+    .col-title { font-weight:600; margin-bottom:8px; }
+
+    #svgLayer { position:absolute; left:0; top:0; pointer-events:none; }
+
+    .cable { stroke:#60a5fa; stroke-width:3; opacity:0.9; stroke-linecap:round;
+      stroke-dasharray:8; animation: dashmove 1s linear infinite;
+    }
+
+    @keyframes dashmove { to { stroke-dashoffset: -16; } }
+
+    /* Scrollable containers */
+    #vmsContainer, #tasksContainer { overflow-auto; flex-1; padding:4px; }
+    #svgContainer { overflow-auto; flex-1; position:relative; }
+    #assignList { max-height:150px; overflow-auto; margin-top:8px; padding:4px; border:1px solid #e5e7eb; border-radius:4px; background:#f9fafb; }
+  </style>
+</head>
+<body class="font-sans">
+
+  <!-- Navbar -->
+  <nav class="bg-white shadow px-6 py-3 flex justify-between items-center">
+    <div class="text-lg font-bold">Cloud Task Scheduler</div>
+    <div class="space-x-6">
+      <button onclick="showView('home')" class="hover:text-gray-900">Home</button>
+      <button onclick="showView('viewResources')" class="hover:text-gray-900">View Resources</button>
+      <button onclick="showView('viewTasks')" class="hover:text-gray-900">View Tasks</button>
+      <button onclick="doSchedule()" class="bg-blue-600 text-white px-3 py-1 rounded">Schedule</button>
+    </div>
+  </nav>
+
+  <div class="flex h-[calc(100vh-64px)]">
+    <!-- Sidebar -->
+    <aside class="w-80 p-4 overflow-auto">
+      <div class="col mb-4">
+        <h3 class="col-title">Add Resource (VM)</h3>
+        <input id="vm_id" placeholder="VM ID (VM-101)" class="w-full border p-2 rounded mb-2" />
+        <input id="cpu_cores" type="number" placeholder="CPU Cores" class="w-full border p-2 rounded mb-2" />
+        <input id="ram_mb" type="number" placeholder="RAM (MB)" class="w-full border p-2 rounded mb-2" />
+        <input id="storage_gb" type="number" placeholder="Storage (GB)" class="w-full border p-2 rounded mb-2" />
+        <input id="energy_rate" type="number" placeholder="Energy Rate (optional)" class="w-full border p-2 rounded mb-2" />
+        <button id="addResourceBtn" class="w-full bg-blue-600 text-white py-2 rounded">Add Resource</button>
+      </div>
+
+      <div class="col">
+        <h3 class="col-title">Add Task</h3>
+        <input id="task_id" placeholder="Task ID (Task-1)" class="w-full border p-2 rounded mb-2" />
+        <input id="cpu_required" type="number" placeholder="CPU Required" class="w-full border p-2 rounded mb-2" />
+        <input id="ram_required_mb" type="number" placeholder="RAM Required (MB)" class="w-full border p-2 rounded mb-2" />
+        <input id="disk_storage_mb" type="number" placeholder="Disk Storage (MB)" class="w-full border p-2 rounded mb-2" />
+        <select id="user_type" class="w-full border p-2 rounded mb-2">
+          <option value="regular">Regular</option>
+          <option value="premium">Premium</option>
+          <option value="vip">VIP</option>
+        </select>
+        <input id="time_required_sec" type="number" placeholder="Time Required (sec)" class="w-full border p-2 rounded mb-2" />
+        <button id="addTaskBtn" class="w-full bg-green-600 text-white py-2 rounded">Add Task</button>
+      </div>
+    </aside>
+
+    <!-- Main Section -->
+    <main class="flex-1 p-4 flex flex-col overflow-hidden">
+      <div id="homeView" class="flex-1 flex flex-col">
+        <div class="grid grid-cols-3 gap-4 flex-1">
+          <!-- VMs -->
+          <div class="col-span-1 col">
+            <div class="col-title">VMs</div>
+            <div id="vmsContainer" class="flex-1 overflow-auto"></div>
+          </div>
+
+          <!-- Visual Assignments -->
+          <div class="col-span-1 col flex flex-col relative">
+            <div class="col-title">Visual Assignments</div>
+            <div id="svgContainer" class="w-full flex-1 relative bg-white border rounded">
+              <svg id="svgLayer" width="100%" height="100%"></svg>
+            </div>
+            <div id="assignList" class="mt-2"></div>
+          </div>
+
+          <!-- Tasks -->
+          <div class="col-span-1 col">
+            <div class="col-title">Tasks</div>
+            <div id="tasksContainer" class="flex-1 overflow-auto"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resource Table -->
+      <div id="viewResources" class="hidden mt-4 overflow-auto flex-1">
+        <h3 class="font-semibold mb-2">Resources Table</h3>
+        <table class="w-full bg-white border">
+          <thead class="bg-gray-100"><tr><th class="p-2 border">VM ID</th><th class="p-2 border">CPU</th><th class="p-2 border">RAM</th><th class="p-2 border">Status</th></tr></thead>
+          <tbody id="resourcesTable"></tbody>
+        </table>
+      </div>
+
+      <!-- Tasks Table -->
+      <div id="viewTasks" class="hidden mt-4 overflow-auto flex-1">
+        <h3 class="font-semibold mb-2">Tasks Table</h3>
+        <table class="w-full bg-white border">
+          <thead class="bg-gray-100"><tr><th class="p-2 border">Task ID</th><th class="p-2 border">User</th><th class="p-2 border">Status</th><th class="p-2 border">VM</th></tr></thead>
+          <tbody id="tasksTable"></tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+
+<script>
+let resources = [];
+let tasks = [];
+let currentAssignments = [];
+
+function showView(id){
+  ['homeView','viewResources','viewTasks'].forEach(v=>document.getElementById(v).classList.add('hidden'));
+  document.getElementById(id==='home'?'homeView':id).classList.remove('hidden');
+}
+
+async function apiGet(path){ const r=await fetch(path); return await r.json(); }
+async function apiPost(path,body){ const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); return await r.json(); }
+
+document.getElementById('addResourceBtn').addEventListener('click', async ()=>{
+  const data={vm_id:vm_id.value.trim(),cpu_cores:+cpu_cores.value,ram_mb:+ram_mb.value,storage_gb:+storage_gb.value,energy_rate:+energy_rate.value};
+  if(!data.vm_id) return alert('Enter VM ID');
+  await apiPost('/add_resource',data);
+  vm_id.value=''; loadData();
+});
+
+document.getElementById('addTaskBtn').addEventListener('click', async ()=>{
+  const data={task_id:task_id.value.trim(),cpu_required:+cpu_required.value,ram_required_mb:+ram_required_mb.value,disk_storage_mb:+disk_storage_mb.value,user_type:user_type.value,time_required_sec:+time_required_sec.value};
+  if(!data.task_id) return alert('Enter Task ID');
+  await apiPost('/add_task',data);
+  task_id.value=''; loadData();
+});
+
+async function deleteVM(id){
+  if(confirm(`Delete ${id}?`)){ await apiPost('/delete_resource',{vm_id:id}); loadData(); }
+}
+async function deleteTask(id){
+  if(confirm(`Delete ${id}?`)){ await apiPost('/delete_task',{task_id:id}); loadData(); }
+}
+
+function clearContainers(){
+  vmsContainer.innerHTML=''; tasksContainer.innerHTML='';
+  svgLayer.innerHTML=''; assignList.innerHTML='';
+}
+
+function renderBoxes(){
+  clearContainers();
+  resources.forEach(r=>{
+    const d=document.createElement('div');
+    d.className='box';
+    d.id=`vm-${r.vm_id}`;
+    const st=r.status||'unknown';
+    d.innerHTML=`<strong>${r.vm_id}</strong><br><span class="status ${st}">${st}</span><button class="delete-btn" onclick="deleteVM('${r.vm_id}')">×</button>`;
+    vmsContainer.appendChild(d);
+  });
+  tasks.forEach(t=>{
+    const d=document.createElement('div');
+    d.className='box';
+    d.id=`task-${t.task_id}`;
+    const st=t.status||'unknown';
+    d.innerHTML=`<strong>${t.task_id}</strong><br><span class="status ${st}">${st}</span><button class="delete-btn" onclick="deleteTask('${t.task_id}')">×</button>`;
+    tasksContainer.appendChild(d);
+  });
+  drawAssignments();
+}
+
+async function doSchedule(){
+  const res = await fetch('/schedule',{method:'POST'});
+  const j = await res.json();
+  if(j.scheduled){
+    j.scheduled.forEach(s=>{
+      const expiresAt=Date.now()+s.time_required_sec*1000;
+      currentAssignments.push({task_id:s.task_id,vm_id:s.vm_id,expiresAt});
+      setTimeout(async()=>{await apiPost('/complete_task',{task_id:s.task_id,vm_id:s.vm_id});loadData();},s.time_required_sec*1000);
+    });
+    loadData();
+  }
+}
+
+function drawAssignments(){
+  const svg=svgLayer; svg.innerHTML='';
+  const running=tasks.filter(t=>t.status==='running').map(t=>t.task_id);
+  currentAssignments=currentAssignments.filter(a=>running.includes(a.task_id));
+  currentAssignments.forEach(a=>{
+    const vmEl=document.getElementById(`vm-${a.vm_id}`),taskEl=document.getElementById(`task-${a.task_id}`);
+    const li=document.createElement('div'); li.textContent=`${a.task_id} → ${a.vm_id}`; assignList.appendChild(li);
+    if(vmEl && taskEl){
+      const svgRect=svgContainer.getBoundingClientRect();
+      const vmRect=vmEl.getBoundingClientRect();
+      const taskRect=taskEl.getBoundingClientRect();
+      const x1=vmRect.left+vmRect.width/2 - svgRect.left;
+      const y1=vmRect.top+vmRect.height/2 - svgRect.top;
+      const x2=taskRect.left+taskRect.width/2 - svgRect.left;
+      const y2=taskRect.top+taskRect.height/2 - svgRect.top;
+      const line=document.createElementNS('http://www.w3.org/2000/svg','line');
+      line.setAttribute('x1',x1); line.setAttribute('y1',y1);
+      line.setAttribute('x2',x2); line.setAttribute('y2',y2);
+      line.setAttribute('class','cable');
+      svg.appendChild(line);
+    }
+  });
+}
+
+async function loadData(){
+  resources=await apiGet('/resources');
+  tasks=await apiGet('/tasks');
+  renderBoxes(); fillTables();
+}
+
+function fillTables(){
+  resourcesTable.innerHTML=resources.map(r=>`<tr><td class="p-2 border">${r.vm_id}</td><td class="p-2 border">${r.cpu_cores}</td><td class="p-2 border">${r.ram_mb}</td><td class="p-2 border">${r.status??'-'}</td></tr>`).join('');
+  tasksTable.innerHTML=tasks.map(t=>`<tr><td class="p-2 border">${t.task_id}</td><td class="p-2 border">${t.user_type}</td><td class="p-2 border">${t.status??'-'}</td><td class="p-2 border">${t.vm_id??'-'}</td></tr>`).join('');
+}
+
+setInterval(loadData,2000);
+window.addEventListener('resize',drawAssignments);
+window.addEventListener('scroll',drawAssignments);
+loadData();
+</script>
+</body>
+</html>
