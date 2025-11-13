@@ -1,10 +1,8 @@
 INSTRUCTIONS
 
 1. Clone repo or downlaod repo
- - open terminal and run this command : "git clone https://github.com/ananthak803/cloudScheduling"
- - cd cloudScheduling
-
-2. Install dependencies
+   
+3. Install dependencies
  - "pip install -r requirements.txt"
 
 3. Setup MongoDB
